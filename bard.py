@@ -25,7 +25,7 @@ def choice(st):
 		inputa=input
 	c=inputa(st)
 	return True if (c.lower()=='y' or c == '') else False
-			
+				
 class Fingerprint(object):
 	def __init__(self,hashval=None):
 		self.hexhash=hashval
@@ -99,11 +99,17 @@ class Entry(object):
 			tags=self.metadata['tags']
 			args=tags.extend([self.type[0],self.type[1],os.path.basename(self.datapath)])
 			return os.path.join(*args)
-		
+	
 class Database(object):
 	def __init__(self,dbfile):
 		self.conn=sqlite3.connect(dbfile)
+			
 		self.curs=self.conn.cursor()
+		self.curs.execute('''CREATE TABLE IF NOT EXISTS entries (fingerprint TEXT PRIMARY KEY ASC,type TEXT,datapath TEXT,metadata BLOB)''')
+		
+	def get(self,entry):
+		self.curs.execute("SELECT (fingerprint,type,datapath,metadata) FROM entries WHERE fingerprint=?",(entry.fingerprint,))
+		result=c.fetchone()
 	def __del__(self):
 		self.conn.commit()
 		self.conn.close()
@@ -113,6 +119,7 @@ class Repository(object):
 		self.rootdir=Repository.findroot(os.path.abspath(currentdirectory))
 		self.barddir=os.path.join(self.rootdir,'.bard')
 		self.database=Database(os.path.join(self.barddir,'entrydb.sqlite'))
+		
 		try:
 			self.overrides=imp.load_module('bardoverrides',open(os.path.join(self.barddir,'overrides.py'),'r'))
 		except:
@@ -136,8 +143,19 @@ class Repository(object):
 				r=currentdirectory
 			else:
 				raise RuntimeError("No bard repository discovered")
-		return r	
+		return r
+	def add(self,fn,options):
+		e=Entry(self,fn)
 		
-if __name__=="__main__":
+		
+if(__name__=="__main__"):
 	import sys
-	repo=Repository(sys.argv[1])
+	import argparse
+	
+	parser = argparse.ArgumentParser()
+	parser.add_argument('barddir',help='the directory containing the bard repository')
+	parser.add_argument('command',help='the bard command to run')
+	args=parser.parse_args()
+	
+	repo=Repository(args.barddir)
+	
