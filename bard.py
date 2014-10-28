@@ -1,22 +1,27 @@
 #!/usr/bin/env python
 
 import mimetypes
-import hashlib
-import sqlite3
 import os.path,os
 import imp
+import string
+import multiprocessing as mp
+import glob
+import argparse
+from functools import partial
+import string
+from copy import copy
 
 if(not mimetypes.inited):
 	mimetypes.init()
-	
+verbose=False
 def get_mimetype(fn):
 	if(os.path.isdir(fn)):
 		a="directory/unknown"	#TODO: add different types here like project,bundle,package,whatever.
 	elif(os.path.isfile(fn)):
 		a=mimetypes.guess_type(fn)[0]
 	else:
-		return None
-	return a.split('/')
+		return ''
+	return a.split('/') if a else ''
 	
 def choice(st):
 	try:
@@ -25,117 +30,50 @@ def choice(st):
 		inputa=input
 	c=inputa(st)
 	return True if (c.lower()=='y' or c == '') else False
-				
-class Fingerprint(object):
-	def __init__(self,hashval=None):
-		self.hexhash=hashval
 	
-	def readiteratefile(fn,sz):
-		keep_going=True
-		while(keep_going):
-			nextbatch=f.read(sz)
-			if(len(nextbatch) != sz):
-				keep_going=False
-			yield nextbatch
+def pathify(src):
+	fro=string.whitespace+string.punctuation+os.sep
+	to='_'*len(string.whitespace)+'.'*len(string.punctuation)+os.sep
+	return src.translate(str.maketrans(fro,to))
 
-	def readiteratedir(fn,sz):
-		for root, dirs, files in os.walk(fn):
-			for name in files:
-				for s in Fingerprint.readiteratefile(os.path.join(root, name),sz):
-					yield s
-					
-	def default(typ,fn,sz):
-		if(typ[0] is 'directory'):
-			ri=Fingerprint.readiteratedir(fn,sz)
-		else:
-			ri=Fingerprint.readiteratefile(fn,sz)
-		return ri
-		
-	def __str__(self):
-		return self.hexhash
-		
-class Entry(object):
-	def __init__(self,repo,fn,type=None,metadata=None,fingerprint=None):
-		self.repo=repo
-		self.datapath=fn
-		if(not type):
-			type=self.compute_type()
-		self.type=type
-		if(not metadata):
-			self.metadata={}
-			metadata=self.compute_metadata()
-		self.metadata=metadata
-		if(not fingerprint):
-			fingerprint=self.compute_fingerprint()
-		self.fingerprint=fingerprint
-		
-	def compute_fingerprint(self):
-		sz=1<<18
-		
-		try:
-			ri=self.repo.overrides.fingerprint(self.type,self.datapath,self.metadata,sz)
-		except:
-			#todo: add plugin architecture here
-			ri=Fingerprint.default(self.type,self.datapath,self.metadata,sz)
-			
-		s2=hashlib.sha256()
-		for f in ri:
-			s2.update(f)
-		return Fingerprint(s2.hexdigest())
-	def compute_type(self):
-		return get_mimetype(self.datapath)
-	def compute_metadata(self):
-		try:
-			return self.repo.overrides.metadata(self.type,self.datapath)
-		except:
-			#todo: add plugin architecture here
-			s=os.stat(self.datapath)
-			k=dir(s)
-			return self.metadata | dict(zip(k,map(lambda x: getattr(s,x),k))) #this should be redone but its cool (union)
-	def project(self):
-		try:
-			return self.repo.overrides.project(self)
-		except:
-			tags=self.metadata['tags']
-			args=tags.extend([self.type[0],self.type[1],os.path.basename(self.datapath)])
-			return os.path.join(*args)
+bard_commands={}
+def is_bard_command(f):
+	bard_commands[f.__name__]=f
+	return f
+
 	
-class Database(object):
-	def __init__(self,dbfile):
-		self.conn=sqlite3.connect(dbfile)
+@is_bard_command
+def insert(src,dst_root,tags):
+	ifunc=find_nearest_command_function('insert',dst_root)
+	if(verbose):
+		print('Attempting to insert "%s"' % (src))
+	dresult=ifunc(src,dst_root,tags)
+	if(dresult):
+		funcout=dresult[1]
+		print('Success..now copying to "%s"' %(dresult[0]))
+		funcout()
 			
-		self.curs=self.conn.cursor()
-		self.curs.execute('''CREATE TABLE IF NOT EXISTS entries (fingerprint TEXT PRIMARY KEY ASC,type TEXT,datapath TEXT,metadata BLOB)''')
+
+def dispatch(src,command,root,tags):
+	if(command in bard_commands):
+		bard_commands[command](src,root,copy(tags))
+	
+	
+	
+	
+bardrootcache={}	
+def find_nearest_bardroot(currentdirectory):
+	global bardrootcache
+	def findrootr(currentdirectory):
+		if(os.path.exists(os.path.join(currentdirectory,'.bard'))):
+			return currentdirectory
+		parent=os.path.dirname(currentdirectory)
 		
-	def get(self,entry):
-		self.curs.execute("SELECT (fingerprint,type,datapath,metadata) FROM entries WHERE fingerprint=?",(entry.fingerprint,))
-		result=c.fetchone()
-	def __del__(self):
-		self.conn.commit()
-		self.conn.close()
-		
-class Repository(object):
-	def __init__(self,currentdirectory):
-		self.rootdir=Repository.findroot(os.path.abspath(currentdirectory))
-		self.barddir=os.path.join(self.rootdir,'.bard')
-		self.database=Database(os.path.join(self.barddir,'entrydb.sqlite'))
-		
-		try:
-			self.overrides=imp.load_module('bardoverrides',open(os.path.join(self.barddir,'overrides.py'),'r'))
-		except:
-			self.overrides=imp.new_module('bardoverrides')
-		
-		
-	def findroot(currentdirectory):
-		def findrootr(currentdirectory):
-			if(os.path.exists(os.path.join(currentdirectory,'.bard'))):
-				return currentdirectory
-			parent=os.path.dirname(currentdirectory)
-			
-			if(parent==currentdirectory):
-				return None
-			else:
-				return findrootr(parent)
+		if(parent==currentdirectory):
+			return None
+		else:
+			return findrootr(parent)
+	if(currentdirectory not in bardrootcache):
 		r=findrootr(currentdirectory)
 		if(r==None):
 			if(choice("'%s' does not seem to be a valid bard repository.  Would you like to create one here?[Y/N]" % currentdirectory)):
@@ -143,19 +81,71 @@ class Repository(object):
 				r=currentdirectory
 			else:
 				raise RuntimeError("No bard repository discovered")
-		return r
-	def add(self,fn,options):
-		e=Entry(self,fn)
+		bardrootcache[currentdirectory]=r
+	return bardrootcache[currentdirectory]
+
+	
+
+#The forwarding rules re-run the dispatch with a different dstroot
+#The bard dispatch walks UP the directory structure looking for an insert() function in .bard, then calls it with the given dstroot and tags.
+dstroot_command_cache={}
+command_defaults={'insert':None}
+def find_nearest_command_function(command,dstroot):
+	global dstroot_command_cache
+	cmdkey=dstroot+':::'+command
+	if(cmdkey not in dstroot_command_cache):
+		bardroot=os.path.join(find_nearest_bardroot(dstroot),'.bard')
+		if(bardroot):
+			mod=imp.load_source(pathify(cmdkey),os.path.join(bardroot,'commands.py'))
+			ifunc=getattr(mod,command,command_defaults[command])
+		else:	
+			ifunc=command_defaults[command]
+		dstroot_command_cache[cmdkey]=ifunc
+	return dstroot_command_cache[cmdkey]
+			
+def recursive_dir_iterator(files):
+	
+	for f in files:
+		g=glob.glob(f)
+		if(len(g)==0):
+			print("%s did not match any known files." % f)
+		for fn in glob.glob(f):
+			if(not os.path.isdir(fn)):
+				yield fn
+			else:
+				for (root,dirs,files) in os.walk(fn):
+					for fn1 in files:
+						yield os.path.join(root,fn1)
+						
+
 		
-		
+def parallel_dispatch(files,command,root,tags,recursive=False,threads=None,verbosity_flag=False):
+	tags=','.join(tags)
+	tags=tags.split(',')
+	tags=dict([ t.split('=') if '=' in t else (t,None) for t in tags])
+	global verbose
+	verbose=verbosity_flag
+	pool=mp.Pool(threads)
+	if(recursive==True):
+		files=recursive_dir_iterator(files)
+	internalfunc=partial(dispatch,command=command,root=root,tags=tags)
+	pool.map(internalfunc,files)
+
+	
 if(__name__=="__main__"):
 	import sys
 	import argparse
 	
 	parser = argparse.ArgumentParser()
-	parser.add_argument('barddir',help='the directory containing the bard repository')
-	parser.add_argument('command',help='the bard command to run')
-	args=parser.parse_args()
+	parser.add_argument('command',help='the bard command to run',choices=list(bard_commands.keys()))
+	parser.add_argument('-r','--root',help='the directory containing the target bard repository',default='.')
+	parser.add_argument('-R','--recursive',help='recursively traverse inputs if they are directories',action='store_true')
+	parser.add_argument('-t','--tags',help='file tags',action='append')
+	parser.add_argument('-k','--threads',type=int,help='The number of parallel cores',default=None)
+	parser.add_argument('-v','--verbose',help='Turn on output messages',action='store_true',dest='verbosity_flag')
+	#parser.add_argument('file',help='the files to import',nargs=argparse.REMAINDER)
+	args,inputs=parser.parse_known_args()
+	args=vars(args) #convert to dict
 	
-	repo=Repository(args.barddir)
+	parallel_dispatch(inputs,**args)
 	
