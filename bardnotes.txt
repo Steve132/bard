@@ -1,0 +1,27 @@
+There are two parts to bard:  A bard database, and a bard importer.
+
+The bard database is contained recursively in directories.  It uses a metadata_db structur.
+The metadata_db structure is a key-value store in-memory.  What it does is 
+this
+
+/root/
+/root/file1
+/root/file2
+/root/file3
+/root/file4
+/root/dir1
+/root/dir1/file5
+/root/dir1/file6
+/root/dir2/file3
+
+would create the following directory structure to store the metadata.
+
+/root/.bard/
+/root/.bard/file1.md
+/root/.bard/file2.md
+/root/.bard/file3.md
+/root/.bard/file4.md
+/root/dir1/.bard/file5.md
+/root/dir1/.bard/file6.md
+/root/dir2/.bard/file3.md
+
