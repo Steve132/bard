@@ -1,22 +1,22 @@
 import sys
 import base64
 import json
-import urllib
+from urllib.parse import quote,unquote
 import threading
 from collections import MutableMapping
 
 class ReplayDB(MutableMapping):
 	def _decode(self,c):
-		s=urllib.unquote(c)
+		s=unquote(c)
 		#s=base64.standard_b64decode(s)
 		return json.loads(s)
 	def _encode(self,o):
 		s=json.dumps(o)
-		c=urllib.quote(s)
+		c=quote(s)
 		#c=base64.standard_b64encode(s)
 		return c
 	def _writeop(self,op,key,value):
-		self.replayfileobj.write("%s %s %s\n") % (op,self._encode(key),self._encode(value))
+		self.replayfileobj.write("%s %s %s\n" % (op,self._encode(key),self._encode(value)))
 
 	def __init__(self,replayfile,compress_history=True):		
 		self.rdb={}
@@ -42,7 +42,7 @@ class ReplayDB(MutableMapping):
 					except Exception as e1:
 						print("error unpacking in %s:%r.  (%r,%r)" % (replayfile,e1,ke,ve))
 		except Exception as e:
-			print("couldn't open %s:%r" % (replayfile,e))
+			pass#print("couldn't open %s:%r" % (replayfile,e))
 
 		if(compress_history):
 			self.replayfileobj=open(replayfile,'w')
